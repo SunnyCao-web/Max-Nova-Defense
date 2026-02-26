@@ -163,6 +163,32 @@ export default function App() {
     }
   };
 
+  const drawWatermelon = (ctx: CanvasRenderingContext2D, x: number, y: number, size: number, rotation: number) => {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rotation);
+
+    // Main body (Green skin)
+    ctx.beginPath();
+    ctx.ellipse(0, 0, size, size * 0.7, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#2d5a27'; // Dark green
+    ctx.fill();
+    ctx.strokeStyle = '#1a3a1a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Stripes
+    ctx.strokeStyle = '#4a7c44'; // Lighter green stripes
+    ctx.lineWidth = 2;
+    for (let i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      ctx.arc(0, i * size * 0.3, size * 0.8, 0, Math.PI, i > 0);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  };
+
   const update = useCallback(() => {
     if (gameState !== 'PLAYING') return;
 
@@ -201,11 +227,17 @@ export default function App() {
 
       // Draw trail
       ctx.beginPath();
-      ctx.strokeStyle = COLORS.ENEMY;
+      ctx.setLineDash([5, 5]);
+      ctx.strokeStyle = 'rgba(255, 68, 68, 0.3)';
       ctx.lineWidth = 1;
-      ctx.moveTo(r.x - (r.targetX - r.x) * 0.05, r.y - (r.targetY - r.y) * 0.05);
-      ctx.lineTo(r.x, r.y);
+      ctx.moveTo(r.x, r.y);
+      ctx.lineTo(r.x - (r.targetX - r.x) * 0.1, r.y - (r.targetY - r.y) * 0.1);
       ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw Watermelon Rocket
+      const angle = Math.atan2(r.targetY - r.y, r.targetX - r.x);
+      drawWatermelon(ctx, r.x, r.y, 12, angle);
 
       // Check impact
       if (r.progress >= 1) {
@@ -239,12 +271,17 @@ export default function App() {
       m.x = m.startX + (m.targetX - m.startX) * m.progress;
       m.y = m.startY + (m.targetY - m.startY) * m.progress;
 
+      // Draw trail
       ctx.beginPath();
-      ctx.strokeStyle = COLORS.PLAYER;
+      ctx.strokeStyle = 'rgba(68, 255, 68, 0.2)';
       ctx.lineWidth = 1;
       ctx.moveTo(m.startX, m.startY);
       ctx.lineTo(m.x, m.y);
       ctx.stroke();
+
+      // Draw Watermelon Missile
+      const angle = Math.atan2(m.targetY - m.startY, m.targetX - m.startX);
+      drawWatermelon(ctx, m.x, m.y, 10, angle);
 
       // Draw Target X
       ctx.beginPath();
