@@ -48,6 +48,8 @@ export interface Car extends Entity {
   speed: number;
   direction: number; // 1 or -1
   color: string;
+  abandoned?: boolean;
+  isJunk?: boolean;
 }
 
 export interface Turret extends Entity {
@@ -64,6 +66,11 @@ export interface Debris extends Entity {
   life: number;
   rotation: number;
   rotationSpeed: number;
+}
+
+export interface StreetLamp extends Entity {
+  active: boolean;
+  color: string;
 }
 
 export const COLORS = {

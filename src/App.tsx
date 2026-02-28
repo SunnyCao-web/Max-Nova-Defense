@@ -6,11 +6,19 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Rocket as RocketIcon, Shield, Target, Trophy, XCircle, RefreshCw, Languages, Volume2, VolumeX, Pause, Play } from 'lucide-react';
-import { GameState, Point, Rocket, Missile, Explosion, City, Turret, Person, Car, Debris, COLORS } from './types';
+import { GameState, Point, Rocket, Missile, Explosion, City, Turret, Person, Car, StreetLamp, Debris, COLORS } from './types';
 
 const WIN_SCORE = 1000;
 const INITIAL_CITIES = 9;
 const BGM_URL = 'https://assets.mixkit.co/music/preview/mixkit-tech-house-vibes-130.mp3';
+const SFX = {
+  LAUNCH: 'https://assets.mixkit.co/sfx/preview/mixkit-fast-rocket-whoosh-1714.mp3',
+  EXPLOSION: 'https://assets.mixkit.co/sfx/preview/mixkit-explosion-hit-1704.mp3',
+  IMPACT: 'https://assets.mixkit.co/sfx/preview/mixkit-heavy-impact-768.mp3',
+  WIN: 'https://assets.mixkit.co/sfx/preview/mixkit-winning-chimes-2015.mp3',
+  LOSE: 'https://assets.mixkit.co/sfx/preview/mixkit-game-over-dark-orchestra-633.mp3',
+  START: 'https://assets.mixkit.co/sfx/preview/mixkit-interface-hint-notification-911.mp3',
+};
 
 const TURRET_CONFIG = [
   { x: 0.1, missiles: 999 },
@@ -40,6 +48,7 @@ export default function App() {
   const debrisRef = useRef<Debris[]>([]);
   const starsRef = useRef<{x: number, y: number, size: number, opacity: number}[]>([]);
   const smokeRef = useRef<{x: number, y: number, life: number, size: number}[]>([]);
+  const streetLampsRef = useRef<StreetLamp[]>([]);
   const frameRef = useRef<number>(0);
   const lastSpawnRef = useRef<number>(0);
   const shakeRef = useRef(0);
@@ -92,6 +101,13 @@ export default function App() {
       target: 'Target: 1000 Points',
     }
   }[lang];
+
+  const playSound = useCallback((url: string, volume = 0.4) => {
+    if (isMuted) return;
+    const audio = new Audio(url);
+    audio.volume = volume;
+    audio.play().catch(() => {});
+  }, [isMuted]);
 
   const triggerShake = (intensity: number) => {
     shakeRef.current = Math.min(shakeRef.current + intensity, 15);
@@ -163,6 +179,20 @@ export default function App() {
     }
     carsRef.current = cars;
 
+    // Init Street Lamps
+    const streetLamps: StreetLamp[] = [];
+    const lampSpacing = 200;
+    for (let x = 100; x < width; x += lampSpacing) {
+      streetLamps.push({
+        id: `lamp-${x}`,
+        x: x,
+        y: height - 50,
+        active: true,
+        color: '#00f2ff' // Cyberpunk cyan
+      });
+    }
+    streetLampsRef.current = streetLamps;
+
     rocketsRef.current = [];
     missilesRef.current = [];
     explosionsRef.current = [];
@@ -184,7 +214,8 @@ export default function App() {
     shakeRef.current = 0;
     setScore(0);
     setGameState('PLAYING');
-  }, []);
+    playSound(SFX.START);
+  }, [playSound]);
 
   const spawnRocket = useCallback(() => {
     const canvas = canvasRef.current;
@@ -240,6 +271,7 @@ export default function App() {
     });
 
     if (bestTurret) {
+      playSound(SFX.LAUNCH, 0.2);
       // Missiles are now unlimited
       missilesRef.current.push({
         id: Math.random().toString(36),
@@ -561,6 +593,7 @@ export default function App() {
         const dist = Math.hypot(r.x - m.x, r.y - m.y);
         if (dist < 20) { // Collision radius
           // Both explode
+          playSound(SFX.EXPLOSION, 0.3);
           explosionsRef.current.push({
             id: `col-r-${r.id}`,
             x: r.x,
@@ -581,6 +614,7 @@ export default function App() {
         if (rIdx !== r2Idx) {
           const dist = Math.hypot(r.x - r2.x, r.y - r2.y);
           if (dist < 20) {
+            playSound(SFX.EXPLOSION, 0.3);
             explosionsRef.current.push({
               id: `col-rr-${r.id}-${r2.id}`,
               x: (r.x + r2.x) / 2,
@@ -622,6 +656,7 @@ export default function App() {
       // Check impact
       if (r.progress >= 1) {
         triggerShake(8);
+        playSound(SFX.IMPACT, 0.5);
         // Create impact explosion
         explosionsRef.current.push({
           id: `impact-${Math.random()}`,
@@ -676,7 +711,33 @@ export default function App() {
 
         // Immediate removal of nearby people and cars
         peopleRef.current = peopleRef.current.filter(p => Math.abs(p.x - r.x) >= 20);
-        carsRef.current = carsRef.current.filter(c => Math.abs(c.x - r.x) >= 30);
+        carsRef.current.forEach(c => {
+          if (Math.abs(c.x - r.x) < 30) {
+            c.isJunk = true;
+          }
+        });
+
+        // Damage street lamps
+        streetLampsRef.current.forEach(l => {
+          if (l.active && Math.abs(l.x - r.x) < 20) {
+            l.active = false;
+            // Spawn glass/metal debris
+            for (let i = 0; i < 5; i++) {
+              debrisRef.current.push({
+                id: `debris-l-${Math.random()}`,
+                x: l.x,
+                y: l.y - 30,
+                vx: (Math.random() - 0.5) * 4,
+                vy: -Math.random() * 4,
+                size: 1 + Math.random() * 2,
+                color: i % 2 === 0 ? '#00f2ff' : '#333',
+                life: 0.8,
+                rotation: Math.random() * Math.PI * 2,
+                rotationSpeed: (Math.random() - 0.5) * 0.5
+              });
+            }
+          }
+        });
 
         // Dust Cloud on impact
         for (let i = 0; i < 10; i++) {
@@ -735,6 +796,7 @@ export default function App() {
       ctx.stroke();
 
       if (m.progress >= 1) {
+        playSound(SFX.EXPLOSION, 0.3);
         explosionsRef.current.push({
           id: `exp-${Math.random()}`,
           x: m.targetX,
@@ -814,10 +876,14 @@ export default function App() {
           triggerShake(2);
           setScore(s => {
             const newScore = s + 20;
-            if (newScore >= WIN_SCORE) setGameState('WON');
+            if (newScore >= WIN_SCORE) {
+              setGameState('WON');
+              playSound(SFX.WIN);
+            }
             return newScore;
           });
           // Chain reaction: Rocket explodes
+          playSound(SFX.EXPLOSION, 0.2);
           explosionsRef.current.push({
             id: `chain-r-${Math.random()}`,
             x: r.x,
@@ -836,6 +902,7 @@ export default function App() {
         const dist = Math.hypot(m.x - e.x, m.y - e.y);
         if (dist < e.radius) {
           // Chain reaction: Missile explodes prematurely
+          playSound(SFX.EXPLOSION, 0.2);
           explosionsRef.current.push({
             id: `chain-m-${Math.random()}`,
             x: m.x,
@@ -866,34 +933,109 @@ export default function App() {
 
     // Update & Draw People
     peopleRef.current.forEach(p => {
-      p.x += p.speed * p.direction;
+      // Check for nearby asteroids (rockets)
+      let isPanicking = false;
+      let closestRocketX = 0;
+      let minRocketDist = 150; // Detection radius
+
+      rocketsRef.current.forEach(r => {
+        const dist = Math.hypot(r.x - p.x, r.y - p.y);
+        if (dist < minRocketDist) {
+          isPanicking = true;
+          minRocketDist = dist;
+          closestRocketX = r.x;
+        }
+      });
+
+      let currentSpeed = p.speed;
+      if (isPanicking) {
+        currentSpeed *= 3; // Run faster!
+        // Move away from the asteroid
+        p.direction = p.x > closestRocketX ? 1 : -1;
+      }
+
+      p.x += currentSpeed * p.direction;
       if (p.x < 0) p.direction = 1;
       if (p.x > canvas.width) p.direction = -1;
 
-      const walkCycle = Math.sin(Date.now() * 0.01) * 3;
+      const walkCycle = Math.sin(Date.now() * (isPanicking ? 0.03 : 0.01)) * 3;
 
       ctx.save();
       ctx.translate(p.x, p.y);
       
-      // Silhouette (Darker for realism at night)
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-      // Head
+      // Panic Indicator (Exclamation mark)
+      if (isPanicking) {
+        ctx.fillStyle = '#ff0000';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('!', 0, -22);
+      }
+      
+      // Ground Shadow
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
       ctx.beginPath();
-      ctx.arc(0, -12, 2.5, 0, Math.PI * 2);
+      ctx.ellipse(0, 0, 5, 2, 0, 0, Math.PI * 2);
       ctx.fill();
-      // Body
-      ctx.fillStyle = p.color;
-      ctx.globalAlpha = 0.6;
-      ctx.fillRect(-2, -10, 4, 6);
-      ctx.globalAlpha = 1;
-      // Legs (Walking animation)
+
+      // Legs (Walking animation - more detailed)
       ctx.strokeStyle = '#000';
-      ctx.lineWidth = 1.2;
+      ctx.lineWidth = 1.8;
+      ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(0, -4);
-      ctx.lineTo(walkCycle, 0);
-      ctx.moveTo(0, -4);
-      ctx.lineTo(-walkCycle, 0);
+      // Leg 1
+      ctx.moveTo(0, -5);
+      ctx.lineTo(walkCycle * 1.2, 0);
+      // Leg 2
+      ctx.moveTo(0, -5);
+      ctx.lineTo(-walkCycle * 1.2, 0);
+      ctx.stroke();
+
+      // Torso (Humanoid shape)
+      const bodyGrad = ctx.createLinearGradient(0, -11, 0, -5);
+      bodyGrad.addColorStop(0, p.color);
+      bodyGrad.addColorStop(1, '#111');
+      ctx.fillStyle = bodyGrad;
+      ctx.beginPath();
+      ctx.moveTo(-3, -11);
+      ctx.lineTo(3, -11); // Shoulders
+      ctx.lineTo(2, -5);
+      ctx.lineTo(-2, -5); // Waist
+      ctx.closePath();
+      ctx.fill();
+
+      // Arms (Swinging opposite to legs)
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      // Arm 1
+      ctx.moveTo(-2.5, -10);
+      ctx.lineTo(-3.5 - walkCycle * 0.8, -6);
+      // Arm 2
+      ctx.moveTo(2.5, -10);
+      ctx.lineTo(3.5 + walkCycle * 0.8, -6);
+      ctx.stroke();
+
+      // Head (Stylized AI/Robot Face)
+      ctx.beginPath();
+      ctx.arc(0, -13, 3.8, 0, Math.PI * 2);
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fill();
+      
+      // Glowing AI Eye
+      ctx.beginPath();
+      ctx.arc(p.direction > 0 ? 1.5 : -1.5, -13.5, 1.2, 0, Math.PI * 2);
+      ctx.fillStyle = '#00f2ff';
+      ctx.shadowBlur = 6;
+      ctx.shadowColor = '#00f2ff';
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Digital mouth line
+      ctx.strokeStyle = '#00f2ff';
+      ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(p.direction > 0 ? 0 : -2.5, -11.5);
+      ctx.lineTo(p.direction > 0 ? 2.5 : 0, -11.5);
       ctx.stroke();
       
       ctx.restore();
@@ -901,44 +1043,197 @@ export default function App() {
 
     // Update & Draw Cars
     carsRef.current.forEach(c => {
-      c.x += c.speed * c.direction;
-      if (c.x < -50) c.x = canvas.width + 50;
-      if (c.x > canvas.width + 50) c.x = -50;
+      // Check for nearby asteroids (rockets)
+      let isPanicking = false;
+      let closestRocketX = 0;
+      let minRocketDist = 250; // Detection radius for cars (larger than people)
+      let veryCloseRocket = false;
+
+      if (!c.isJunk) {
+        rocketsRef.current.forEach(r => {
+          const dist = Math.hypot(r.x - c.x, r.y - c.y);
+          if (dist < minRocketDist) {
+            isPanicking = true;
+            minRocketDist = dist;
+            closestRocketX = r.x;
+            if (dist < 80) veryCloseRocket = true;
+          }
+        });
+      }
+
+      // Abandonment Logic
+      if (veryCloseRocket && !c.abandoned && !c.isJunk && Math.random() < 0.01) {
+        c.abandoned = true;
+        // Spawn a person running away
+        peopleRef.current.push({
+          id: `driver-${Date.now()}-${Math.random()}`,
+          x: c.x,
+          y: c.y,
+          speed: 0.2 + Math.random() * 0.2,
+          direction: c.x > closestRocketX ? 1 : -1,
+          color: '#ffffff' // Driver in white shirt
+        });
+      }
+
+      let currentSpeed = (c.abandoned || c.isJunk) ? 0 : c.speed;
+      if (isPanicking && !c.abandoned && !c.isJunk) {
+        currentSpeed *= 2.5; // Speed up!
+        // Move away from the asteroid
+        c.direction = c.x > closestRocketX ? 1 : -1;
+      }
+
+      c.x += currentSpeed * c.direction;
+      if (c.x < -100) c.x = canvas.width + 100;
+      if (c.x > canvas.width + 100) c.x = -100;
 
       ctx.save();
       ctx.translate(c.x, c.y);
       if (c.direction < 0) ctx.scale(-1, 1);
 
-      // Car Body (Darker)
-      ctx.fillStyle = c.color;
-      ctx.globalAlpha = 0.7;
+      // Panic Indicator (Honking/Alert)
+      if (isPanicking && !c.abandoned && !c.isJunk) {
+        ctx.fillStyle = '#ffcc00'; // Warning yellow
+        ctx.font = 'bold 8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('BEEP!', 0, -18);
+      } else if (c.abandoned && !c.isJunk) {
+        ctx.fillStyle = '#ff4444';
+        ctx.font = 'bold 8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('ABANDONED', 0, -18);
+      } else if (c.isJunk) {
+        ctx.fillStyle = '#ff4444';
+        ctx.font = 'bold 8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('JUNK', 0, -18);
+      }
+
+      // Ground Shadow
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
       ctx.beginPath();
-      ctx.roundRect(-12, -8, 24, 6, 2);
+      ctx.ellipse(0, 0, 15, 4, 0, 0, Math.PI * 2);
       ctx.fill();
-      // Roof
-      ctx.beginPath();
-      ctx.roundRect(-8, -12, 14, 5, 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
+
+      // Car Body (Detailed Gradient)
+      const bodyGrad = ctx.createLinearGradient(0, -12, 0, -2);
+      let carColor = c.color;
+      if (c.isJunk) carColor = '#1a1a1a'; // Burnt out black
+      else if (c.abandoned) carColor = '#333'; // Darker if abandoned
       
-      // Wheels
-      ctx.fillStyle = '#000';
+      bodyGrad.addColorStop(0, carColor);
+      bodyGrad.addColorStop(1, '#000000'); // Darker bottom
+      ctx.fillStyle = bodyGrad;
+      
+      // Main Chassis
       ctx.beginPath();
-      ctx.arc(-8, -2, 3, 0, Math.PI * 2);
-      ctx.arc(8, -2, 3, 0, Math.PI * 2);
+      ctx.roundRect(-14, -8, 28, 7, 3);
       ctx.fill();
       
-      // Headlights (Beam)
-      const beam = ctx.createLinearGradient(12, -5, 40, -5);
-      beam.addColorStop(0, 'rgba(255, 255, 200, 0.4)');
-      beam.addColorStop(1, 'rgba(255, 255, 200, 0)');
-      ctx.fillStyle = beam;
+      // Cabin/Roof
       ctx.beginPath();
-      ctx.moveTo(12, -6);
-      ctx.lineTo(40, -12);
-      ctx.lineTo(40, 2);
+      ctx.moveTo(-10, -8);
+      ctx.lineTo(-6, -14);
+      ctx.lineTo(6, -14);
+      ctx.lineTo(10, -8);
       ctx.closePath();
       ctx.fill();
+
+      // Windows (Glass effect)
+      if (!c.isJunk) {
+        ctx.fillStyle = 'rgba(135, 206, 235, 0.6)'; // Sky blue glass
+        ctx.beginPath();
+        ctx.moveTo(-8, -8.5);
+        ctx.lineTo(-5, -13);
+        ctx.lineTo(0, -13);
+        ctx.lineTo(0, -8.5);
+        ctx.closePath();
+        ctx.fill();
+        
+        ctx.beginPath();
+        ctx.moveTo(1, -8.5);
+        ctx.lineTo(1, -13);
+        ctx.lineTo(5, -13);
+        ctx.lineTo(8, -8.5);
+        ctx.closePath();
+        ctx.fill();
+
+        // Reflection on glass
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(-4, -12);
+        ctx.lineTo(-2, -9);
+        ctx.stroke();
+      } else {
+        // Broken windows for junk car
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+        ctx.beginPath();
+        ctx.moveTo(-8, -8.5);
+        ctx.lineTo(-5, -13);
+        ctx.lineTo(8, -8.5);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Smoke from junk car
+        if (frameRef.current % 10 === 0) {
+          smokeRef.current.push({ x: c.x + (Math.random() - 0.5) * 10, y: c.y - 12, life: 1, size: 3 + Math.random() * 5 });
+        }
+      }
+
+      // Wheels (More detailed)
+      const drawWheel = (wx: number) => {
+        ctx.fillStyle = c.isJunk ? '#000' : '#111'; // Tire
+        ctx.beginPath();
+        ctx.arc(wx, -2, 4, 0, Math.PI * 2);
+        ctx.fill();
+        if (!c.isJunk) {
+          ctx.fillStyle = '#7f8c8d'; // Hubcap
+          ctx.beginPath();
+          ctx.arc(wx, -2, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      };
+      drawWheel(-9);
+      drawWheel(9);
+
+      // Taillights (Red glow)
+      if (!c.abandoned && !c.isJunk && powerOn) {
+        ctx.fillStyle = '#ff0000';
+        ctx.shadowBlur = 5;
+        ctx.shadowColor = '#ff0000';
+        ctx.fillRect(-14, -7, 2, 3);
+        ctx.shadowBlur = 0;
+
+        // Headlights (Front glow)
+        ctx.fillStyle = '#ffffcc';
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = '#ffffcc';
+        ctx.fillRect(12, -7, 2, 3);
+        ctx.shadowBlur = 0;
+
+        // Headlight Beam
+        const beam = ctx.createLinearGradient(14, -5, 50, -5);
+        beam.addColorStop(0, 'rgba(255, 255, 200, 0.4)');
+        beam.addColorStop(1, 'rgba(255, 255, 200, 0)');
+        ctx.fillStyle = beam;
+        ctx.beginPath();
+        ctx.moveTo(14, -6);
+        ctx.lineTo(50, -15);
+        ctx.lineTo(50, 5);
+        ctx.closePath();
+        ctx.fill();
+      } else if ((c.abandoned || !powerOn) && !c.isJunk) {
+        // Abandoned or Power Off car lights (dim/off)
+        ctx.fillStyle = '#330000';
+        ctx.fillRect(-14, -7, 2, 3);
+        ctx.fillStyle = '#333300';
+        ctx.fillRect(12, -7, 2, 3);
+      } else if (c.isJunk) {
+        // Junk car lights (broken)
+        ctx.fillStyle = '#000';
+        ctx.fillRect(-14, -7, 2, 3);
+        ctx.fillRect(12, -7, 2, 3);
+      }
 
       ctx.restore();
     });
@@ -973,6 +1268,70 @@ export default function App() {
     }
     ctx.restore();
 
+    // Draw Street Lamps
+    const anyLampBroken = streetLampsRef.current.some(l => !l.active);
+    const powerOn = !anyLampBroken;
+
+    streetLampsRef.current.forEach(l => {
+      if (!l.active) {
+        // Draw broken lamp
+        ctx.save();
+        ctx.translate(l.x, l.y);
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(0, -30);
+        ctx.stroke();
+        ctx.restore();
+        return;
+      }
+
+      ctx.save();
+      ctx.translate(l.x, l.y);
+      
+      // Pole
+      ctx.strokeStyle = '#1a1a1a';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, -35);
+      ctx.stroke();
+      
+      // Arm
+      ctx.beginPath();
+      ctx.moveTo(0, -35);
+      ctx.lineTo(10, -35);
+      ctx.stroke();
+
+      // Lamp Head
+      ctx.fillStyle = '#111';
+      ctx.fillRect(8, -37, 6, 3);
+
+      if (powerOn) {
+        // Light Glow
+        const glow = ctx.createRadialGradient(11, -35, 0, 11, -35, 25);
+        glow.addColorStop(0, l.color);
+        glow.addColorStop(0.3, l.color + '66');
+        glow.addColorStop(1, 'transparent');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(11, -35, 25, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Light Beam on ground
+        const groundGlow = ctx.createRadialGradient(11, 0, 0, 11, 0, 40);
+        groundGlow.addColorStop(0, l.color + '44');
+        groundGlow.addColorStop(1, 'transparent');
+        ctx.fillStyle = groundGlow;
+        ctx.beginPath();
+        ctx.ellipse(11, 0, 30, 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+    });
+
     // Draw Cities
     citiesRef.current.forEach(c => {
       if (c.active) {
@@ -982,7 +1341,7 @@ export default function App() {
           return d < prev.dist ? { dist: d, exp: curr } : prev;
         }, { dist: 200, exp: null as any });
 
-        if (nearestExp.exp) {
+        if (nearestExp.exp && powerOn) {
           ctx.save();
           ctx.shadowBlur = 15;
           ctx.shadowColor = `rgba(255, 150, 50, ${1 - nearestExp.dist / 200})`;
@@ -1051,7 +1410,7 @@ export default function App() {
           }
           
           // Windows (Grid)
-          ctx.fillStyle = '#f1c40f'; // Yellow window light
+          ctx.fillStyle = powerOn ? '#f1c40f' : '#1a1a1a'; // Yellow window light or off
           const winSize = 3;
           const winGap = 4;
           for (let row = 0; row < 10; row++) {
@@ -1194,6 +1553,7 @@ export default function App() {
     // Check Game Over
     if (turretsRef.current.every(t => !t.active)) {
       setGameState('LOST');
+      playSound(SFX.LOSE);
     }
 
     // Final Post-Processing (Scanlines & Vignette)
