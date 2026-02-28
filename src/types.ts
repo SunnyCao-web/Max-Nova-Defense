@@ -35,6 +35,19 @@ export interface Explosion extends Entity {
 
 export interface City extends Entity {
   active: boolean;
+  type?: 'apartment' | 'eastern-market' | 'restaurant' | 'skyscraper';
+}
+
+export interface Person extends Entity {
+  speed: number;
+  direction: number; // 1 or -1
+  color: string;
+}
+
+export interface Car extends Entity {
+  speed: number;
+  direction: number; // 1 or -1
+  color: string;
 }
 
 export interface Turret extends Entity {
