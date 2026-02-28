@@ -1,4 +1,4 @@
-export type GameState = 'START' | 'PLAYING' | 'WON' | 'LOST';
+export type GameState = 'START' | 'PLAYING' | 'PAUSED' | 'WON' | 'LOST';
 
 export interface Point {
   x: number;
@@ -54,6 +54,16 @@ export interface Turret extends Entity {
   active: boolean;
   missiles: number;
   maxMissiles: number;
+}
+
+export interface Debris extends Entity {
+  vx: number;
+  vy: number;
+  size: number;
+  color: string;
+  life: number;
+  rotation: number;
+  rotationSpeed: number;
 }
 
 export const COLORS = {

@@ -5,8 +5,8 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Rocket as RocketIcon, Shield, Target, Trophy, XCircle, RefreshCw, Languages, Volume2, VolumeX } from 'lucide-react';
-import { GameState, Point, Rocket, Missile, Explosion, City, Turret, Person, Car, COLORS } from './types';
+import { Rocket as RocketIcon, Shield, Target, Trophy, XCircle, RefreshCw, Languages, Volume2, VolumeX, Pause, Play } from 'lucide-react';
+import { GameState, Point, Rocket, Missile, Explosion, City, Turret, Person, Car, Debris, COLORS } from './types';
 
 const WIN_SCORE = 1000;
 const INITIAL_CITIES = 9;
@@ -37,9 +37,13 @@ export default function App() {
   const turretsRef = useRef<Turret[]>([]);
   const peopleRef = useRef<Person[]>([]);
   const carsRef = useRef<Car[]>([]);
+  const debrisRef = useRef<Debris[]>([]);
+  const starsRef = useRef<{x: number, y: number, size: number, opacity: number}[]>([]);
+  const smokeRef = useRef<{x: number, y: number, life: number, size: number}[]>([]);
   const frameRef = useRef<number>(0);
   const lastSpawnRef = useRef<number>(0);
   const shakeRef = useRef(0);
+  const mousePosRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     const audio = new Audio(BGM_URL);
@@ -162,6 +166,21 @@ export default function App() {
     rocketsRef.current = [];
     missilesRef.current = [];
     explosionsRef.current = [];
+    debrisRef.current = [];
+    smokeRef.current = [];
+    
+    // Init Stars
+    const stars = [];
+    for (let i = 0; i < 150; i++) {
+      stars.push({
+        x: Math.random() * width,
+        y: Math.random() * height * 0.7,
+        size: Math.random() * 1.5,
+        opacity: Math.random()
+      });
+    }
+    starsRef.current = stars;
+
     shakeRef.current = 0;
     setScore(0);
     setGameState('PLAYING');
@@ -236,59 +255,237 @@ export default function App() {
     }
   };
 
-  const drawWatermelon = (ctx: CanvasRenderingContext2D, x: number, y: number, size: number, rotation: number) => {
+  const drawAsteroid = (ctx: CanvasRenderingContext2D, x: number, y: number, size: number, rotation: number, id: string) => {
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(rotation);
 
-    // Main body (Green skin)
+    // Fire Trail (Atmospheric Entry)
+    const fireGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, size * 3);
+    fireGrad.addColorStop(0, 'rgba(255, 100, 0, 0.8)');
+    fireGrad.addColorStop(0.4, 'rgba(255, 50, 0, 0.4)');
+    fireGrad.addColorStop(1, 'rgba(255, 0, 0, 0)');
+    
+    ctx.fillStyle = fireGrad;
     ctx.beginPath();
-    ctx.ellipse(0, 0, size, size * 0.7, 0, 0, Math.PI * 2);
-    ctx.fillStyle = '#2d5a27'; // Dark green
+    ctx.arc(0, 0, size * 2.5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = '#1a3a1a';
+
+    // Asteroid Body (Irregular)
+    ctx.beginPath();
+    const seed = parseInt(id.slice(-4), 36) || 0;
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      const jitter = (Math.sin(seed + i) * 0.3 + 0.7);
+      const r = size * jitter;
+      const px = Math.cos(angle) * r;
+      const py = Math.sin(angle) * r;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    
+    const bodyGrad = ctx.createRadialGradient(-size/3, -size/3, 0, 0, 0, size);
+    bodyGrad.addColorStop(0, '#95a5a6'); // Lighter grey
+    bodyGrad.addColorStop(1, '#2c3e50'); // Darker grey
+    ctx.fillStyle = bodyGrad;
+    ctx.fill();
+    ctx.strokeStyle = '#1a1a1a';
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Stripes
-    ctx.strokeStyle = '#4a7c44'; // Lighter green stripes
-    ctx.lineWidth = 2;
-    for (let i = -1; i <= 1; i++) {
+    // Craters
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    for (let i = 0; i < 3; i++) {
+      const cx = Math.cos(seed + i * 2) * size * 0.4;
+      const cy = Math.sin(seed + i * 2) * size * 0.4;
       ctx.beginPath();
-      ctx.arc(0, i * size * 0.3, size * 0.8, 0, Math.PI, i > 0);
-      ctx.stroke();
+      ctx.arc(cx, cy, size * 0.15, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     ctx.restore();
   };
 
+  const drawRuins = (ctx: CanvasRenderingContext2D, x: number, y: number, type: string) => {
+    ctx.save();
+    ctx.translate(x, y);
+    
+    ctx.fillStyle = '#3a3a3a'; // Dark grey for ruins
+    
+    if (type === 'skyscraper') {
+      // Jagged base
+      ctx.beginPath();
+      ctx.moveTo(-14, 0);
+      ctx.lineTo(-14, -20);
+      ctx.lineTo(-8, -15);
+      ctx.lineTo(0, -25);
+      ctx.lineTo(6, -10);
+      ctx.lineTo(14, -18);
+      ctx.lineTo(14, 0);
+      ctx.fill();
+    } else if (type === 'eastern-market') {
+      ctx.beginPath();
+      ctx.moveTo(-25, 0);
+      ctx.lineTo(-25, -10);
+      ctx.lineTo(-10, -5);
+      ctx.lineTo(5, -12);
+      ctx.lineTo(25, -8);
+      ctx.lineTo(25, 0);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(-12, 0);
+      ctx.lineTo(-12, -15);
+      ctx.lineTo(-4, -8);
+      ctx.lineTo(6, -12);
+      ctx.lineTo(12, -5);
+      ctx.lineTo(12, 0);
+      ctx.fill();
+    }
+    
+    // Add some static debris around
+    ctx.fillStyle = '#222';
+    for (let i = 0; i < 5; i++) {
+      const dx = (Math.sin(x + i) * 20);
+      const dy = -Math.abs(Math.cos(x + i) * 5);
+      ctx.fillRect(dx, dy, 3, 3);
+    }
+
+    ctx.restore();
+  };
+
+  const drawMissile = (ctx: CanvasRenderingContext2D, x: number, y: number, rotation: number) => {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rotation);
+
+    // Missile Body (Metallic)
+    const gradient = ctx.createLinearGradient(-8, 0, 8, 0);
+    gradient.addColorStop(0, '#7f8c8d');
+    gradient.addColorStop(0.5, '#ecf0f1');
+    gradient.addColorStop(1, '#7f8c8d');
+    
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.moveTo(10, 0); // Tip
+    ctx.lineTo(-8, -4); // Top back
+    ctx.lineTo(-10, -4); // Top fin back
+    ctx.lineTo(-10, 4); // Bottom fin back
+    ctx.lineTo(-8, 4); // Bottom back
+    ctx.closePath();
+    ctx.fill();
+
+    // Fins
+    ctx.fillStyle = '#2c3e50';
+    ctx.beginPath();
+    ctx.moveTo(-6, -4);
+    ctx.lineTo(-12, -8);
+    ctx.lineTo(-10, -4);
+    ctx.closePath();
+    ctx.fill();
+    
+    ctx.beginPath();
+    ctx.moveTo(-6, 4);
+    ctx.lineTo(-12, 8);
+    ctx.lineTo(-10, 4);
+    ctx.closePath();
+    ctx.fill();
+
+    // Glowing Tip
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = '#e74c3c';
+    ctx.fillStyle = '#e74c3c';
+    ctx.beginPath();
+    ctx.arc(10, 0, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Engine Glow
+    const engineGlow = ctx.createRadialGradient(-10, 0, 0, -10, 0, 10);
+    engineGlow.addColorStop(0, '#f1c40f');
+    engineGlow.addColorStop(0.5, 'rgba(230, 126, 34, 0.5)');
+    engineGlow.addColorStop(1, 'rgba(230, 126, 34, 0)');
+    ctx.fillStyle = engineGlow;
+    ctx.beginPath();
+    ctx.arc(-10, 0, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  };
+
   const drawSky = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
-    // Sky Gradient
+    // Night Sky Gradient
     const gradient = ctx.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, '#1e4877'); // Deep blue
-    gradient.addColorStop(0.6, '#4584b4'); // Mid blue
-    gradient.addColorStop(1, '#87ceeb'); // Sky blue
+    gradient.addColorStop(0, '#050b1a'); // Deep space blue
+    gradient.addColorStop(0.5, '#0a1a3a'); // Mid night blue
+    gradient.addColorStop(1, '#1a2a4a'); // Horizon blue
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, width, height);
 
-    // Simple Clouds
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+    // Stars
+    starsRef.current.forEach(s => {
+      s.opacity = 0.3 + Math.abs(Math.sin(Date.now() * 0.001 + s.x)) * 0.7;
+      ctx.fillStyle = `rgba(255, 255, 255, ${s.opacity})`;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // Moon
+    ctx.save();
+    ctx.translate(width * 0.85, height * 0.15);
+    // Moon Glow
+    const moonGlow = ctx.createRadialGradient(0, 0, 0, 0, 0, 50);
+    moonGlow.addColorStop(0, 'rgba(255, 255, 255, 0.15)');
+    moonGlow.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = moonGlow;
+    ctx.beginPath();
+    ctx.arc(0, 0, 50, 0, Math.PI * 2);
+    ctx.fill();
+    // Moon Body
+    ctx.fillStyle = '#f5f5f5';
+    ctx.beginPath();
+    ctx.arc(0, 0, 25, 0, Math.PI * 2);
+    ctx.fill();
+    // Moon Craters
+    ctx.fillStyle = '#e0e0e0';
+    [[-8, -5, 4], [5, 8, 5], [-5, 10, 3], [10, -5, 4]].forEach(([cx, cy, cr]) => {
+      ctx.beginPath();
+      ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.restore();
+
+    // Atmospheric Haze
+    const haze = ctx.createLinearGradient(0, height * 0.6, 0, height);
+    haze.addColorStop(0, 'rgba(26, 42, 74, 0)');
+    haze.addColorStop(1, 'rgba(26, 42, 74, 0.4)');
+    ctx.fillStyle = haze;
+    ctx.fillRect(0, height * 0.6, width, height * 0.4);
+
+    // Realistic Clouds (Soft, wispy)
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
     const cloudSeeds = [
-      { x: 0.1, y: 0.2, s: 40 },
-      { x: 0.3, y: 0.15, s: 50 },
-      { x: 0.6, y: 0.25, s: 45 },
-      { x: 0.85, y: 0.1, s: 60 },
+      { x: 0.1, y: 0.3, w: 120, h: 40 },
+      { x: 0.4, y: 0.2, w: 180, h: 50 },
+      { x: 0.7, y: 0.35, w: 150, h: 45 },
+      { x: 0.9, y: 0.25, w: 130, h: 35 },
     ];
 
     cloudSeeds.forEach(c => {
       const cx = c.x * width;
       const cy = c.y * height;
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, c.w);
+      grad.addColorStop(0, 'rgba(255, 255, 255, 0.08)');
+      grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.arc(cx, cy, c.s, 0, Math.PI * 2);
-      ctx.arc(cx + c.s * 0.6, cy - c.s * 0.2, c.s * 0.8, 0, Math.PI * 2);
-      ctx.arc(cx + c.s * 1.2, cy, c.s * 0.7, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy, c.w, c.h, 0, 0, Math.PI * 2);
       ctx.fill();
     });
+    ctx.shadowBlur = 0;
   };
 
   const update = useCallback(() => {
@@ -312,6 +509,44 @@ export default function App() {
 
     // Draw Sky
     drawSky(ctx, canvas.width, canvas.height);
+
+    // Update & Draw Debris
+    debrisRef.current = debrisRef.current.filter(d => {
+      d.x += d.vx;
+      d.y += d.vy;
+      d.vy += 0.15; // Gravity
+      d.rotation += d.rotationSpeed;
+      d.life -= 0.01;
+
+      if (d.y > canvas.height - 50) {
+        d.y = canvas.height - 50;
+        d.vx *= 0.8;
+        d.vy *= -0.3;
+      }
+
+      if (d.life <= 0) return false;
+
+      ctx.save();
+      ctx.translate(d.x, d.y);
+      ctx.rotate(d.rotation);
+      ctx.fillStyle = d.color;
+      ctx.globalAlpha = d.life;
+      ctx.fillRect(-d.size/2, -d.size/2, d.size, d.size);
+      ctx.restore();
+      return true;
+    });
+
+    // Update & Draw Smoke
+    smokeRef.current = smokeRef.current.filter(s => {
+      s.life -= 0.02;
+      s.size += 0.2;
+      if (s.life <= 0) return false;
+      ctx.fillStyle = `rgba(200, 200, 200, ${s.life * 0.3})`;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+      ctx.fill();
+      return true;
+    });
 
     // Spawn Rockets
     const now = Date.now();
@@ -380,9 +615,9 @@ export default function App() {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Draw Watermelon Rocket
+      // Draw Asteroid
       const angle = Math.atan2(r.targetY - r.y, r.targetX - r.x);
-      drawWatermelon(ctx, r.x, r.y, 12, angle);
+      drawAsteroid(ctx, r.x, r.y, 14, angle + Date.now() * 0.005, r.id);
 
       // Check impact
       if (r.progress >= 1) {
@@ -399,11 +634,59 @@ export default function App() {
 
         // Damage cities or turrets
         citiesRef.current.forEach(c => {
-          if (c.active && Math.abs(c.x - r.x) < 30) c.active = false;
+          if (c.active && Math.abs(c.x - r.x) < 30) {
+            c.active = false;
+            // Spawn crumbling debris
+            for (let i = 0; i < 15; i++) {
+              debrisRef.current.push({
+                id: `debris-${Math.random()}`,
+                x: c.x + (Math.random() - 0.5) * 30,
+                y: c.y - Math.random() * 40,
+                vx: (Math.random() - 0.5) * 4,
+                vy: -Math.random() * 5,
+                size: 2 + Math.random() * 4,
+                color: '#4a4a4a',
+                life: 1,
+                rotation: Math.random() * Math.PI * 2,
+                rotationSpeed: (Math.random() - 0.5) * 0.2
+              });
+            }
+          }
         });
         turretsRef.current.forEach(t => {
-          if (t.active && Math.abs(t.x - r.x) < 30) t.active = false;
+          if (t.active && Math.abs(t.x - r.x) < 30) {
+            t.active = false;
+            // Spawn metallic crumbling debris
+            for (let i = 0; i < 20; i++) {
+              debrisRef.current.push({
+                id: `debris-t-${Math.random()}`,
+                x: t.x + (Math.random() - 0.5) * 40,
+                y: t.y - Math.random() * 20,
+                vx: (Math.random() - 0.5) * 6,
+                vy: -Math.random() * 8,
+                size: 3 + Math.random() * 5,
+                color: i % 2 === 0 ? '#7f8c8d' : '#2c3e50', // Metallic colors
+                life: 1.2,
+                rotation: Math.random() * Math.PI * 2,
+                rotationSpeed: (Math.random() - 0.5) * 0.3
+              });
+            }
+          }
         });
+
+        // Immediate removal of nearby people and cars
+        peopleRef.current = peopleRef.current.filter(p => Math.abs(p.x - r.x) >= 20);
+        carsRef.current = carsRef.current.filter(c => Math.abs(c.x - r.x) >= 30);
+
+        // Dust Cloud on impact
+        for (let i = 0; i < 10; i++) {
+          smokeRef.current.push({
+            x: r.x + (Math.random() - 0.5) * 40,
+            y: r.y + (Math.random() - 0.5) * 10,
+            life: 0.8 + Math.random() * 0.4,
+            size: 5 + Math.random() * 10
+          });
+        }
 
         return false;
       }
@@ -420,15 +703,27 @@ export default function App() {
 
       // Draw trail
       ctx.beginPath();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-      ctx.lineWidth = 1;
+      const trailGrad = ctx.createLinearGradient(m.startX, m.startY, m.x, m.y);
+      trailGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+      trailGrad.addColorStop(0.8, 'rgba(255, 255, 255, 0.4)');
+      trailGrad.addColorStop(1, 'rgba(255, 200, 50, 0.8)');
+      
+      ctx.strokeStyle = trailGrad;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
       ctx.moveTo(m.startX, m.startY);
       ctx.lineTo(m.x, m.y);
       ctx.stroke();
+      ctx.setLineDash([]);
 
-      // Draw Watermelon Missile
+      // Draw Detailed Missile
       const angle = Math.atan2(m.targetY - m.startY, m.targetX - m.startX);
-      drawWatermelon(ctx, m.x, m.y, 10, angle);
+      drawMissile(ctx, m.x, m.y, angle);
+
+      // Add Smoke Trail
+      if (frameRef.current % 2 === 0) {
+        smokeRef.current.push({ x: m.x, y: m.y, life: 1, size: 2 });
+      }
 
       // Draw Target X
       ctx.beginPath();
@@ -464,10 +759,53 @@ export default function App() {
 
       if (e.radius <= 0) return false;
 
+      const ratio = e.radius / e.maxRadius;
+      
+      // 1. Outer Glow (Large, soft)
+      const glow = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.radius * 1.5);
+      glow.addColorStop(0, `rgba(255, 100, 0, ${0.4 * ratio})`);
+      glow.addColorStop(1, 'rgba(255, 50, 0, 0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.radius * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 2. Fire Layer (Orange/Yellow)
+      const fire = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.radius);
+      fire.addColorStop(0, `rgba(255, 200, 50, ${ratio})`);
+      fire.addColorStop(0.6, `rgba(255, 100, 0, ${0.8 * ratio})`);
+      fire.addColorStop(1, 'rgba(200, 50, 0, 0)');
+      ctx.fillStyle = fire;
       ctx.beginPath();
       ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(255, 255, 255, ${e.radius / e.maxRadius})`;
       ctx.fill();
+
+      // 3. Core (White/Bright Yellow)
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.radius * 0.4, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255, 255, 255, ${ratio})`;
+      ctx.fill();
+
+      // 4. Shockwave (Thin ring expanding)
+      if (e.growing) {
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.radius * 1.2, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.3 * (1 - ratio)})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      // 5. Sparks (Random bits flying out)
+      const seed = parseInt(e.id.slice(-4), 36) || 0;
+      ctx.fillStyle = `rgba(255, 255, 200, ${ratio})`;
+      for (let i = 0; i < 8; i++) {
+        const angle = (seed + i) * 137.5; // Golden angle
+        const dist = e.radius * (1 + Math.sin(seed + i) * 0.5) * (1 - ratio * 0.5);
+        const px = e.x + Math.cos(angle) * dist;
+        const py = e.y + Math.sin(angle) * dist;
+        const size = Math.max(1, 3 * ratio);
+        ctx.fillRect(px - size/2, py - size/2, size, size);
+      }
 
       // Check collision with rockets
       rocketsRef.current = rocketsRef.current.filter(r => {
@@ -479,9 +817,48 @@ export default function App() {
             if (newScore >= WIN_SCORE) setGameState('WON');
             return newScore;
           });
+          // Chain reaction: Rocket explodes
+          explosionsRef.current.push({
+            id: `chain-r-${Math.random()}`,
+            x: r.x,
+            y: r.y,
+            radius: 0,
+            maxRadius: 35,
+            growing: true,
+          });
           return false;
         }
         return true;
+      });
+
+      // Check collision with missiles (fireworks)
+      missilesRef.current = missilesRef.current.filter(m => {
+        const dist = Math.hypot(m.x - e.x, m.y - e.y);
+        if (dist < e.radius) {
+          // Chain reaction: Missile explodes prematurely
+          explosionsRef.current.push({
+            id: `chain-m-${Math.random()}`,
+            x: m.x,
+            y: m.y,
+            radius: 0,
+            maxRadius: 40,
+            growing: true,
+          });
+          return false;
+        }
+        return true;
+      });
+
+      // Check collision with people
+      peopleRef.current = peopleRef.current.filter(p => {
+        const dist = Math.hypot(p.x - e.x, p.y - e.y);
+        return dist > e.radius + 5;
+      });
+
+      // Check collision with cars
+      carsRef.current = carsRef.current.filter(c => {
+        const dist = Math.hypot(c.x - e.x, c.y - e.y);
+        return dist > e.radius + 10;
       });
 
       return true;
@@ -498,41 +875,27 @@ export default function App() {
       ctx.save();
       ctx.translate(p.x, p.y);
       
-      // Legs (Walking animation)
-      ctx.strokeStyle = '#333';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(0, -4);
-      ctx.lineTo(walkCycle, 0); // Leg 1
-      ctx.moveTo(0, -4);
-      ctx.lineTo(-walkCycle, 0); // Leg 2
-      ctx.stroke();
-
-      // Body (Shirt)
-      ctx.fillStyle = p.color;
-      ctx.fillRect(-2, -10, 4, 6);
-
-      // Arms
-      ctx.strokeStyle = p.color;
-      ctx.beginPath();
-      ctx.moveTo(-2, -9);
-      ctx.lineTo(-2 - Math.abs(walkCycle) * 0.5, -6);
-      ctx.moveTo(2, -9);
-      ctx.lineTo(2 + Math.abs(walkCycle) * 0.5, -6);
-      ctx.stroke();
-
+      // Silhouette (Darker for realism at night)
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
       // Head
-      ctx.fillStyle = '#ffdbac'; // Skin tone
       ctx.beginPath();
       ctx.arc(0, -12, 2.5, 0, Math.PI * 2);
       ctx.fill();
-
-      // Hair (Optional detail)
-      ctx.fillStyle = '#4a3728';
+      // Body
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = 0.6;
+      ctx.fillRect(-2, -10, 4, 6);
+      ctx.globalAlpha = 1;
+      // Legs (Walking animation)
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 1.2;
       ctx.beginPath();
-      ctx.arc(0, -13, 2.5, Math.PI, 0);
-      ctx.fill();
-
+      ctx.moveTo(0, -4);
+      ctx.lineTo(walkCycle, 0);
+      ctx.moveTo(0, -4);
+      ctx.lineTo(-walkCycle, 0);
+      ctx.stroke();
+      
       ctx.restore();
     });
 
@@ -546,50 +909,85 @@ export default function App() {
       ctx.translate(c.x, c.y);
       if (c.direction < 0) ctx.scale(-1, 1);
 
-      // Car Body (Lower part)
+      // Car Body (Darker)
       ctx.fillStyle = c.color;
-      ctx.fillRect(-12, -8, 24, 6); 
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.roundRect(-12, -8, 24, 6, 2);
+      ctx.fill();
+      // Roof
+      ctx.beginPath();
+      ctx.roundRect(-8, -12, 14, 5, 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
       
-      // Car Roof (Upper part)
-      ctx.fillRect(-6, -12, 12, 5);
-
       // Wheels
-      ctx.fillStyle = '#1a1a1a';
+      ctx.fillStyle = '#000';
       ctx.beginPath();
       ctx.arc(-8, -2, 3, 0, Math.PI * 2);
       ctx.arc(8, -2, 3, 0, Math.PI * 2);
       ctx.fill();
       
-      // Wheel Hubs
-      ctx.fillStyle = '#888';
+      // Headlights (Beam)
+      const beam = ctx.createLinearGradient(12, -5, 40, -5);
+      beam.addColorStop(0, 'rgba(255, 255, 200, 0.4)');
+      beam.addColorStop(1, 'rgba(255, 255, 200, 0)');
+      ctx.fillStyle = beam;
       ctx.beginPath();
-      ctx.arc(-8, -2, 1.5, 0, Math.PI * 2);
-      ctx.arc(8, -2, 1.5, 0, Math.PI * 2);
+      ctx.moveTo(12, -6);
+      ctx.lineTo(40, -12);
+      ctx.lineTo(40, 2);
+      ctx.closePath();
       ctx.fill();
-
-      // Windows
-      ctx.fillStyle = '#87ceeb';
-      ctx.fillRect(1, -11, 4, 3); // Front window
-      ctx.fillRect(-5, -11, 5, 3); // Side window
-
-      // Headlight (Front)
-      ctx.fillStyle = '#ffffaa';
-      ctx.fillRect(10, -7, 2, 2);
-      
-      // Taillight (Back)
-      ctx.fillStyle = '#ff0000';
-      ctx.fillRect(-12, -7, 2, 2);
 
       ctx.restore();
     });
 
     // Draw Ground
-    ctx.fillStyle = '#1a1a1a';
-    ctx.fillRect(0, canvas.height - 50, canvas.width, 10);
+    ctx.save();
+    // Main Ground
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, canvas.height - 50, canvas.width, 50);
+    
+    // Ground Texture (Pavement/Road)
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < canvas.width; i += 40) {
+      ctx.beginPath();
+      ctx.moveTo(i, canvas.height - 50);
+      ctx.lineTo(i, canvas.height);
+      ctx.stroke();
+    }
+    
+    // Horizon Glow (City lights)
+    const horizonGlow = ctx.createLinearGradient(0, canvas.height - 60, 0, canvas.height - 50);
+    horizonGlow.addColorStop(0, 'rgba(255, 200, 100, 0)');
+    horizonGlow.addColorStop(1, 'rgba(255, 200, 100, 0.15)');
+    ctx.fillStyle = horizonGlow;
+    ctx.fillRect(0, canvas.height - 60, canvas.width, 10);
+    
+    // Road Markings
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+    for (let i = 0; i < canvas.width; i += 100) {
+      ctx.fillRect(i, canvas.height - 25, 40, 2);
+    }
+    ctx.restore();
 
     // Draw Cities
     citiesRef.current.forEach(c => {
       if (c.active) {
+        // Dynamic Lighting from explosions
+        const nearestExp = explosionsRef.current.reduce((prev, curr) => {
+          const d = Math.hypot(curr.x - c.x, curr.y - c.y);
+          return d < prev.dist ? { dist: d, exp: curr } : prev;
+        }, { dist: 200, exp: null as any });
+
+        if (nearestExp.exp) {
+          ctx.save();
+          ctx.shadowBlur = 15;
+          ctx.shadowColor = `rgba(255, 150, 50, ${1 - nearestExp.dist / 200})`;
+        }
+
         if (c.type === 'eastern-market') {
           // Draw Eastern Market Landmark
           ctx.save();
@@ -714,18 +1112,82 @@ export default function App() {
             ctx.fillRect(c.x + 4, winY, 4, 4);
           }
         }
+        
+        if (nearestExp.exp) ctx.restore();
+      } else {
+        // Draw Ruins
+        drawRuins(ctx, c.x, c.y, c.type || 'apartment');
       }
     });
 
     // Draw Turrets
     turretsRef.current.forEach(t => {
       if (t.active) {
-        ctx.fillStyle = COLORS.TURRET;
+        ctx.save();
+        ctx.translate(t.x, t.y);
+
+        // Calculate angle to mouse
+        const angle = Math.atan2(mousePosRef.current.y - t.y, mousePosRef.current.x - t.x);
+
+        // Turret Base (Metallic)
+        const gradient = ctx.createLinearGradient(-20, 0, 20, 0);
+        gradient.addColorStop(0, '#4a4a4a');
+        gradient.addColorStop(0.5, '#7f8c8d');
+        gradient.addColorStop(1, '#4a4a4a');
+        
+        ctx.fillStyle = gradient;
         ctx.beginPath();
-        ctx.arc(t.x, t.y - 5, 20, Math.PI, 0);
+        ctx.arc(0, -5, 22, Math.PI, 0);
         ctx.fill();
+        
+        // Base Shadow/Detail
+        ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Mechanical details on base
+        ctx.fillStyle = '#2c3e50';
+        ctx.fillRect(-15, -5, 30, 5); // Bottom plate
+        
+        // Rotating Head
+        ctx.save();
+        ctx.rotate(angle + Math.PI / 2); // Adjust for vertical barrel
+
         // Barrel
-        ctx.fillRect(t.x - 4, t.y - 30, 8, 10);
+        const barrelGrad = ctx.createLinearGradient(-5, -35, 5, -35);
+        barrelGrad.addColorStop(0, '#2c3e50');
+        barrelGrad.addColorStop(0.5, '#34495e');
+        barrelGrad.addColorStop(1, '#2c3e50');
+        
+        ctx.fillStyle = barrelGrad;
+        ctx.fillRect(-5, -35, 10, 25);
+        
+        // Muzzle Brake
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(-7, -38, 14, 4);
+        
+        // Barrel Detail (Lines)
+        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(-3, -35);
+        ctx.lineTo(-3, -10);
+        ctx.stroke();
+
+        ctx.restore();
+
+        // Status Light
+        ctx.fillStyle = t.missiles > 0 ? '#00ff00' : '#ff0000';
+        ctx.beginPath();
+        ctx.arc(0, -15, 3, 0, Math.PI * 2);
+        ctx.fill();
+        // Glow
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = t.missiles > 0 ? '#00ff00' : '#ff0000';
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        ctx.restore();
       }
     });
 
@@ -733,6 +1195,21 @@ export default function App() {
     if (turretsRef.current.every(t => !t.active)) {
       setGameState('LOST');
     }
+
+    // Final Post-Processing (Scanlines & Vignette)
+    ctx.save();
+    // Scanlines
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+    for (let i = 0; i < canvas.height; i += 4) {
+      ctx.fillRect(0, i, canvas.width, 1);
+    }
+    // Vignette
+    const vignette = ctx.createRadialGradient(canvas.width/2, canvas.height/2, canvas.width * 0.4, canvas.width/2, canvas.height/2, canvas.width * 0.8);
+    vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vignette.addColorStop(1, 'rgba(0, 0, 0, 0.4)');
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
 
     frameRef.current = requestAnimationFrame(update);
   }, [gameState, score, spawnRocket]);
@@ -749,7 +1226,27 @@ export default function App() {
     window.addEventListener('resize', handleResize);
     handleResize();
 
-    return () => window.removeEventListener('resize', handleResize);
+    const handleMouseMove = (e: MouseEvent) => {
+      mousePosRef.current = { x: e.clientX, y: e.clientY };
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'p') {
+        setGameState(prev => {
+          if (prev === 'PLAYING') return 'PAUSED';
+          if (prev === 'PAUSED') return 'PLAYING';
+          return prev;
+        });
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
   useEffect(() => {
@@ -803,6 +1300,23 @@ export default function App() {
           >
             {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
           </button>
+
+          {gameState === 'PLAYING' && (
+            <button 
+              onClick={() => setGameState('PAUSED')}
+              className="pointer-events-auto bg-black/40 backdrop-blur-md border border-white/10 p-3 rounded-xl hover:bg-white/10 transition-colors"
+            >
+              <Pause className="w-5 h-5" />
+            </button>
+          )}
+          {gameState === 'PAUSED' && (
+            <button 
+              onClick={() => setGameState('PLAYING')}
+              className="pointer-events-auto bg-emerald-500/80 backdrop-blur-md border border-emerald-500/30 p-3 rounded-xl hover:bg-emerald-400 transition-colors"
+            >
+              <Play className="w-5 h-5 text-black" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -867,6 +1381,25 @@ export default function App() {
                   >
                     <RefreshCw className="w-5 h-5" />
                     {t.restart}
+                  </button>
+                </>
+              )}
+
+              {gameState === 'PAUSED' && (
+                <>
+                  <div className="w-20 h-20 bg-blue-500/20 rounded-3xl flex items-center justify-center mx-auto mb-8 border border-blue-500/30">
+                    <Pause className="w-10 h-10 text-blue-400" />
+                  </div>
+                  <h2 className="text-4xl font-bold mb-4 text-blue-400">{lang === 'zh' ? '遊戲暫停' : 'PAUSED'}</h2>
+                  <p className="text-zinc-400 mb-10 leading-relaxed">
+                    {lang === 'zh' ? '點擊下方按鈕繼續保衛城市' : 'Click the button below to continue defending the city'}
+                  </p>
+                  <button
+                    onClick={() => setGameState('PLAYING')}
+                    className="w-full bg-blue-500 hover:bg-blue-400 text-white font-bold py-4 rounded-2xl transition-all transform hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 text-lg"
+                  >
+                    <Play className="w-5 h-5" />
+                    {lang === 'zh' ? '繼續遊戲' : 'RESUME'}
                   </button>
                 </>
               )}
