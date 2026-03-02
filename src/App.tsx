@@ -10,14 +10,23 @@ import { GameState, Point, Rocket, Missile, Explosion, City, Turret, Person, Car
 
 const WIN_SCORE = 1000;
 const INITIAL_CITIES = 9;
-const BGM_URL = 'https://assets.mixkit.co/music/preview/mixkit-tech-house-vibes-130.mp3';
+const BGM_URLS = [
+  'https://cdn.pixabay.com/download/audio/2022/03/10/audio_c8c8a7315b.mp3?filename=cyberpunk-2099-10701.mp3',
+  'https://assets.mixkit.co/music/preview/mixkit-driving-ambition-32.mp3',
+  'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'
+];
 const SFX = {
-  LAUNCH: 'https://assets.mixkit.co/sfx/preview/mixkit-fast-rocket-whoosh-1714.mp3',
-  EXPLOSION: 'https://assets.mixkit.co/sfx/preview/mixkit-explosion-hit-1704.mp3',
-  IMPACT: 'https://assets.mixkit.co/sfx/preview/mixkit-heavy-impact-768.mp3',
-  WIN: 'https://assets.mixkit.co/sfx/preview/mixkit-winning-chimes-2015.mp3',
-  LOSE: 'https://assets.mixkit.co/sfx/preview/mixkit-game-over-dark-orchestra-633.mp3',
-  START: 'https://assets.mixkit.co/sfx/preview/mixkit-interface-hint-notification-911.mp3',
+  LAUNCH: 'https://actions.google.com/sounds/v1/science_fiction/whoosh.mp3',
+  EXPLOSION: 'https://actions.google.com/sounds/v1/explosions/explosion_large_distant.mp3',
+  EXPLOSION_HEAVY: 'https://actions.google.com/sounds/v1/explosions/large_explosion.mp3',
+  IMPACT: 'https://actions.google.com/sounds/v1/impacts/crash_metal_debris.mp3',
+  COLLAPSE: 'https://actions.google.com/sounds/v1/impacts/concrete_impact.mp3',
+  WIN: 'https://actions.google.com/sounds/v1/cartoon/success_fanfare_trumpets.mp3',
+  LOSE: 'https://actions.google.com/sounds/v1/cartoon/fail_fanfare.mp3',
+  START: 'https://actions.google.com/sounds/v1/ui/beep_short_on.mp3',
+  CLICK: 'https://actions.google.com/sounds/v1/ui/click_on.mp3',
+  SCORE: 'https://actions.google.com/sounds/v1/cartoon/pop.mp3',
+  ALARM: 'https://actions.google.com/sounds/v1/alarms/alarm_clock_beeping.mp3',
 };
 
 const TURRET_CONFIG = [
@@ -31,7 +40,9 @@ const TURRET_CONFIG = [
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [bgmAudio, setBgmAudio] = useState<HTMLAudioElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const soundBuffersRef = useRef<Record<string, AudioBuffer>>({});
   const [gameState, setGameState] = useState<GameState>('START');
   const [score, setScore] = useState(0);
   const scoreRef = useRef(0);
@@ -56,28 +67,167 @@ export default function App() {
   const shakeRef = useRef(0);
   const mousePosRef = useRef({ x: 0, y: 0 });
 
+  const [audioError, setAudioError] = useState<string | null>(null);
+
   useEffect(() => {
-    const audio = new Audio(BGM_URL);
-    audio.loop = true;
-    audio.volume = 0.1; // Set to a lower volume as requested
-    audioRef.current = audio;
+    let currentBgmIndex = 0;
+    let isMounted = true;
+
+    const loadBgm = (index: number) => {
+      if (!isMounted) return;
+      if (index >= BGM_URLS.length) {
+        console.error("All BGM sources failed.");
+        return;
+      }
+
+      const audio = new Audio(BGM_URLS[index]);
+      audio.loop = true;
+      audio.volume = 0.2;
+      
+      const onCanPlay = () => {
+        if (isMounted) {
+          setBgmAudio(audio);
+          setAudioError(null);
+        }
+        audio.removeEventListener('canplay', onCanPlay);
+      };
+
+      const onError = (e: any) => {
+        console.warn(`BGM source ${index} failed:`, e);
+        audio.removeEventListener('error', onError);
+        loadBgm(index + 1);
+      };
+
+      audio.addEventListener('canplay', onCanPlay);
+      audio.addEventListener('error', onError);
+
+      // Timeout fallback if canplay doesn't fire
+      setTimeout(() => {
+        if (isMounted && audio.readyState < 3 && !bgmAudio) {
+          console.warn(`BGM source ${index} timed out, trying next...`);
+          audio.removeEventListener('canplay', onCanPlay);
+          audio.removeEventListener('error', onError);
+          loadBgm(index + 1);
+        }
+      }, 5000);
+    };
+
+    loadBgm(currentBgmIndex);
 
     return () => {
-      audio.pause();
-      audioRef.current = null;
+      isMounted = false;
     };
   }, []);
 
   useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.muted = isMuted;
+    return () => {
+      if (bgmAudio) {
+        bgmAudio.pause();
+        bgmAudio.src = "";
+      }
+    };
+  }, [bgmAudio]);
+
+  useEffect(() => {
+    // Initialize AudioContext on first user interaction
+    const initAudioContext = () => {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      if (audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume();
+      }
+    };
+
+    window.addEventListener('click', initAudioContext);
+    window.addEventListener('touchstart', initAudioContext);
+
+    // Preload SFX
+    const preloadSFX = async () => {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioContextRef.current = ctx;
+      
+      const loadSound = async (name: string, url: string) => {
+        try {
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+          const arrayBuffer = await response.arrayBuffer();
+          
+          // Use callback-based decodeAudioData for maximum compatibility if needed, 
+          // but promise-based is standard now.
+          const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+          soundBuffersRef.current[name] = audioBuffer;
+        } catch (e) {
+          console.warn(`Failed to load sound: ${name} from ${url}`, e);
+          // Fallback to a simple Audio object if fetch/decode fails
+          // This won't use the Web Audio API path but might still work for some sounds
+        }
+      };
+
+      await Promise.all(
+        Object.entries(SFX).map(([name, url]) => loadSound(name, url))
+      );
+    };
+
+    preloadSFX();
+
+    return () => {
+      window.removeEventListener('click', initAudioContext);
+      window.removeEventListener('touchstart', initAudioContext);
+    };
+  }, []);
+
+  const playSound = useCallback((soundName: string, volume = 0.5) => {
+    if (isMuted || !audioContextRef.current) return;
+    
+    const buffer = soundBuffersRef.current[soundName];
+
+    if (!buffer) {
+      // Fallback to HTML5 Audio if buffer not ready
+      const url = SFX[soundName as keyof typeof SFX];
+      if (url) {
+        const audio = new Audio(url);
+        audio.volume = volume;
+        audio.play().catch(() => {});
+      }
+      return;
+    }
+
+    const ctx = audioContextRef.current;
+    if (ctx.state === 'suspended') ctx.resume();
+
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    
+    const gainNode = ctx.createGain();
+    gainNode.gain.value = volume;
+    
+    source.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    source.start(0);
+  }, [isMuted]);
+
+  useEffect(() => {
+    if (bgmAudio) {
+      bgmAudio.muted = isMuted;
       if (gameState === 'PLAYING' && !isMuted) {
-        audioRef.current.play().catch(() => {
-          console.log('Autoplay blocked');
+        bgmAudio.play().catch(e => {
+          console.warn("BGM play failed:", e);
+          if (e.name === 'NotAllowedError') {
+            setAudioError("Click anywhere to enable sound");
+          }
         });
+      } else if (gameState !== 'PLAYING' && gameState !== 'PAUSED') {
+        bgmAudio.pause();
       }
     }
-  }, [isMuted, gameState]);
+  }, [isMuted, gameState, bgmAudio]);
+
+  useEffect(() => {
+    if (score > 0 && score % 100 === 0) {
+      playSound(SFX.SCORE, 0.3);
+    }
+  }, [score, playSound]);
 
   const t = {
     zh: {
@@ -104,18 +254,16 @@ export default function App() {
     }
   }[lang];
 
-  const playSound = useCallback((url: string, volume = 0.4) => {
-    if (isMuted) return;
-    const audio = new Audio(url);
-    audio.volume = volume;
-    audio.play().catch(() => {});
-  }, [isMuted]);
-
   const triggerShake = (intensity: number) => {
     shakeRef.current = Math.min(shakeRef.current + intensity, 15);
   };
 
   const initGame = useCallback(() => {
+    // Prime audio on first interaction
+    if (bgmAudio && !isMuted) {
+      bgmAudio.play().catch(() => {});
+    }
+    
     const width = window.innerWidth;
     const height = window.innerHeight;
 
@@ -248,6 +396,14 @@ export default function App() {
   }, []);
 
   const handleCanvasClick = (e: React.MouseEvent | React.TouchEvent) => {
+    // Clear audio error on interaction
+    setAudioError(null);
+
+    // Prime audio on interaction
+    if (bgmAudio && !isMuted && bgmAudio.paused && gameState === 'PLAYING') {
+      bgmAudio.play().catch(() => {});
+    }
+
     if (gameState !== 'PLAYING') return;
 
     const canvas = canvasRef.current;
@@ -634,7 +790,7 @@ export default function App() {
         if (rIdx !== r2Idx) {
           const dist = Math.hypot(r.x - r2.x, r.y - r2.y);
           if (dist < 20) {
-            playSound(SFX.EXPLOSION, 0.3);
+            playSound(SFX.EXPLOSION_HEAVY, 0.4);
             explosionsRef.current.push({
               id: `col-rr-${r.id}-${r2.id}`,
               x: (r.x + r2.x) / 2,
@@ -692,6 +848,9 @@ export default function App() {
         citiesRef.current.forEach(c => {
           if (c.active && Math.abs(c.x - r.x) < 30) {
             c.active = false;
+            playSound(SFX.ALARM, 0.3);
+            playSound(SFX.COLLAPSE, 0.6);
+            triggerShake(8);
             // Spawn crumbling debris
             for (let i = 0; i < 15; i++) {
               debrisRef.current.push({
@@ -712,6 +871,9 @@ export default function App() {
         turretsRef.current.forEach(t => {
           if (t.active && Math.abs(t.x - r.x) < 30) {
             t.active = false;
+            playSound(SFX.ALARM, 0.3);
+            playSound(SFX.COLLAPSE, 0.6);
+            triggerShake(10);
             // Spawn metallic crumbling debris
             for (let i = 0; i < 20; i++) {
               debrisRef.current.push({
@@ -898,7 +1060,7 @@ export default function App() {
       rocketsRef.current = rocketsRef.current.filter(r => {
         const dist = Math.hypot(r.x - e.x, r.y - e.y);
         if (dist < e.radius) {
-          triggerShake(2);
+          triggerShake(3);
           scoreRef.current += 20;
           setScore(scoreRef.current);
           if (scoreRef.current >= WIN_SCORE) {
@@ -906,7 +1068,7 @@ export default function App() {
             playSound(SFX.WIN);
           }
           // Chain reaction: Rocket explodes
-          playSound(SFX.EXPLOSION, 0.2);
+          playSound(SFX.EXPLOSION, 0.4);
           explosionsRef.current.push({
             id: `chain-r-${Math.random()}`,
             x: r.x,
@@ -1665,6 +1827,17 @@ export default function App() {
       />
 
       {/* HUD */}
+      {audioError && !isMuted && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-red-500/80 text-white text-[10px] px-3 py-1 rounded-full backdrop-blur-sm z-[100] animate-pulse">
+          <span>{audioError}</span>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="underline font-bold pointer-events-auto"
+          >
+            {lang === 'zh' ? '重试' : 'Retry'}
+          </button>
+        </div>
+      )}
       <div className="absolute top-24 left-6 right-6 flex justify-between items-start pointer-events-none">
         <div className="bg-black/40 backdrop-blur-md border border-white/10 p-4 rounded-2xl">
           <div className="text-xs uppercase tracking-widest text-zinc-400 mb-1">{t.score}</div>
@@ -1700,7 +1873,10 @@ export default function App() {
 
           {gameState === 'PLAYING' && (
             <button 
-              onClick={() => setGameState('PAUSED')}
+              onClick={() => {
+                playSound(SFX.CLICK);
+                setGameState('PAUSED');
+              }}
               className="pointer-events-auto bg-black/40 backdrop-blur-md border border-white/10 p-3 rounded-xl hover:bg-white/10 transition-colors"
             >
               <Pause className="w-5 h-5" />
@@ -1708,7 +1884,10 @@ export default function App() {
           )}
           {gameState === 'PAUSED' && (
             <button 
-              onClick={() => setGameState('PLAYING')}
+              onClick={() => {
+                playSound(SFX.CLICK);
+                setGameState('PLAYING');
+              }}
               className="pointer-events-auto bg-emerald-500/80 backdrop-blur-md border border-emerald-500/30 p-3 rounded-xl hover:bg-emerald-400 transition-colors"
             >
               <Play className="w-5 h-5 text-black" />
@@ -1738,13 +1917,25 @@ export default function App() {
                   </div>
                   <h1 className="text-5xl font-bold mb-4 tracking-tight">{t.title}</h1>
                   <p className="text-zinc-400 mb-10 leading-relaxed">{t.instructions}</p>
-                  <button
-                    onClick={initGame}
-                    className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold py-4 rounded-2xl transition-all transform hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 text-lg"
-                  >
-                    <Target className="w-5 h-5" />
-                    {t.start}
-                  </button>
+                  <div className="flex flex-col gap-3">
+                    <button
+                      onClick={() => {
+                        playSound(SFX.CLICK);
+                        initGame();
+                      }}
+                      className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold py-4 rounded-2xl transition-all transform hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 text-lg"
+                    >
+                      <Target className="w-5 h-5" />
+                      {t.start}
+                    </button>
+                    <button
+                      onClick={() => playSound(SFX.START)}
+                      className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium py-3 rounded-xl transition-all flex items-center justify-center gap-2 text-sm border border-white/5"
+                    >
+                      <Volume2 className="w-4 h-4" />
+                      {lang === 'zh' ? '测试音效' : 'Test Sound'}
+                    </button>
+                  </div>
                 </>
               )}
 
@@ -1756,7 +1947,10 @@ export default function App() {
                   <h2 className="text-4xl font-bold mb-4 text-yellow-400">{t.win}</h2>
                   <div className="text-6xl font-bold mb-10 tabular-nums">{score}</div>
                   <button
-                    onClick={initGame}
+                    onClick={() => {
+                      playSound(SFX.CLICK);
+                      initGame();
+                    }}
                     className="w-full bg-white text-black font-bold py-4 rounded-2xl transition-all transform hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 text-lg"
                   >
                     <RefreshCw className="w-5 h-5" />
@@ -1773,7 +1967,10 @@ export default function App() {
                   <h2 className="text-4xl font-bold mb-4 text-red-400">{t.lose}</h2>
                   <div className="text-6xl font-bold mb-10 tabular-nums">{score}</div>
                   <button
-                    onClick={initGame}
+                    onClick={() => {
+                      playSound(SFX.CLICK);
+                      initGame();
+                    }}
                     className="w-full bg-red-500 hover:bg-red-400 text-white font-bold py-4 rounded-2xl transition-all transform hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 text-lg"
                   >
                     <RefreshCw className="w-5 h-5" />
@@ -1792,7 +1989,10 @@ export default function App() {
                     {lang === 'zh' ? '點擊下方按鈕繼續保衛城市' : 'Click the button below to continue defending the city'}
                   </p>
                   <button
-                    onClick={() => setGameState('PLAYING')}
+                    onClick={() => {
+                      playSound(SFX.CLICK);
+                      setGameState('PLAYING');
+                    }}
                     className="w-full bg-blue-500 hover:bg-blue-400 text-white font-bold py-4 rounded-2xl transition-all transform hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 text-lg"
                   >
                     <Play className="w-5 h-5" />
