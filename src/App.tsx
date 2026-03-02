@@ -34,6 +34,7 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [gameState, setGameState] = useState<GameState>('START');
   const [score, setScore] = useState(0);
+  const scoreRef = useRef(0);
   const [lang, setLang] = useState<'zh' | 'en'>('zh');
   const [isMuted, setIsMuted] = useState(false);
   
@@ -49,6 +50,7 @@ export default function App() {
   const starsRef = useRef<{x: number, y: number, size: number, opacity: number}[]>([]);
   const smokeRef = useRef<{x: number, y: number, life: number, size: number}[]>([]);
   const streetLampsRef = useRef<StreetLamp[]>([]);
+  const frameCountRef = useRef<number>(0);
   const frameRef = useRef<number>(0);
   const lastSpawnRef = useRef<number>(0);
   const shakeRef = useRef(0);
@@ -114,8 +116,14 @@ export default function App() {
   };
 
   const initGame = useCallback(() => {
-    const width = canvasRef.current?.width || 800;
-    const height = canvasRef.current?.height || 600;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+
+    // Update canvas size immediately just in case
+    if (canvasRef.current) {
+      canvasRef.current.width = width;
+      canvasRef.current.height = height;
+    }
 
     // Init Cities
     const cities: City[] = [];
@@ -212,6 +220,7 @@ export default function App() {
     starsRef.current = stars;
 
     shakeRef.current = 0;
+    scoreRef.current = 0;
     setScore(0);
     setGameState('PLAYING');
     playSound(SFX.START);
@@ -229,12 +238,14 @@ export default function App() {
       id: Math.random().toString(36),
       x: startX,
       y: 0,
+      startX,
+      startY: 0,
       targetX,
       targetY,
-      speed: 0.0007 + Math.random() * 0.0007 + (score / 70000), // Slower base speed and scaling
+      speed: 0.0015 + Math.random() * 0.0015 + (scoreRef.current / 50000), // Increased speed
       progress: 0,
     });
-  }, [score]);
+  }, []);
 
   const handleCanvasClick = (e: React.MouseEvent | React.TouchEvent) => {
     if (gameState !== 'PLAYING') return;
@@ -527,6 +538,12 @@ export default function App() {
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
+    // Reset transform and clear
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    const anyLampBroken = streetLampsRef.current.some(l => !l.active);
+    const powerOn = !anyLampBroken;
+
     // Handle Screen Shake
     if (shakeRef.current > 0) {
       const sx = (Math.random() - 0.5) * shakeRef.current * 2;
@@ -580,9 +597,11 @@ export default function App() {
       return true;
     });
 
+    frameCountRef.current++;
+
     // Spawn Rockets
     const now = Date.now();
-    if (now - lastSpawnRef.current > Math.max(500, 2000 - score)) {
+    if (now - lastSpawnRef.current > Math.max(400, 1500 - scoreRef.current)) {
       spawnRocket();
       lastSpawnRef.current = now;
     }
@@ -605,7 +624,8 @@ export default function App() {
           // Mark for removal (using progress > 1 as a hack or just filtering later)
           r.progress = 2; 
           m.progress = 2;
-          setScore(s => s + 20);
+          scoreRef.current += 20;
+          setScore(scoreRef.current);
         }
       });
 
@@ -625,7 +645,8 @@ export default function App() {
             });
             r.progress = 2;
             r2.progress = 2;
-            setScore(s => s + 40);
+            scoreRef.current += 40;
+            setScore(scoreRef.current);
           }
         }
       });
@@ -636,8 +657,8 @@ export default function App() {
       if (r.progress >= 2) return false; // Collided
 
       r.progress += r.speed;
-      r.x = r.x + (r.targetX - r.x) * r.speed / (1 - r.progress + r.speed);
-      r.y = r.y + (r.targetY - r.y) * r.speed / (1 - r.progress + r.speed);
+      r.x = r.startX + (r.targetX - r.startX) * r.progress;
+      r.y = r.startY + (r.targetY - r.startY) * r.progress;
 
       // Draw trail
       ctx.beginPath();
@@ -782,7 +803,7 @@ export default function App() {
       drawMissile(ctx, m.x, m.y, angle);
 
       // Add Smoke Trail
-      if (frameRef.current % 2 === 0) {
+      if (frameCountRef.current % 2 === 0) {
         smokeRef.current.push({ x: m.x, y: m.y, life: 1, size: 2 });
       }
 
@@ -843,10 +864,14 @@ export default function App() {
       ctx.fill();
 
       // 3. Core (White/Bright Yellow)
+      ctx.save();
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = '#ffffff';
       ctx.beginPath();
       ctx.arc(e.x, e.y, e.radius * 0.4, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(255, 255, 255, ${ratio})`;
       ctx.fill();
+      ctx.restore();
 
       // 4. Shockwave (Thin ring expanding)
       if (e.growing) {
@@ -874,14 +899,12 @@ export default function App() {
         const dist = Math.hypot(r.x - e.x, r.y - e.y);
         if (dist < e.radius) {
           triggerShake(2);
-          setScore(s => {
-            const newScore = s + 20;
-            if (newScore >= WIN_SCORE) {
-              setGameState('WON');
-              playSound(SFX.WIN);
-            }
-            return newScore;
-          });
+          scoreRef.current += 20;
+          setScore(scoreRef.current);
+          if (scoreRef.current >= WIN_SCORE) {
+            setGameState('WON');
+            playSound(SFX.WIN);
+          }
           // Chain reaction: Rocket explodes
           playSound(SFX.EXPLOSION, 0.2);
           explosionsRef.current.push({
@@ -1126,7 +1149,11 @@ export default function App() {
       
       // Main Chassis
       ctx.beginPath();
-      ctx.roundRect(-14, -8, 28, 7, 3);
+      if (ctx.roundRect) {
+        ctx.roundRect(-14, -8, 28, 7, 3);
+      } else {
+        ctx.rect(-14, -8, 28, 7);
+      }
       ctx.fill();
       
       // Cabin/Roof
@@ -1175,7 +1202,7 @@ export default function App() {
         ctx.fill();
         
         // Smoke from junk car
-        if (frameRef.current % 10 === 0) {
+        if (frameCountRef.current % 10 === 0) {
           smokeRef.current.push({ x: c.x + (Math.random() - 0.5) * 10, y: c.y - 12, life: 1, size: 3 + Math.random() * 5 });
         }
       }
@@ -1269,9 +1296,6 @@ export default function App() {
     ctx.restore();
 
     // Draw Street Lamps
-    const anyLampBroken = streetLampsRef.current.some(l => !l.active);
-    const powerOn = !anyLampBroken;
-
     streetLampsRef.current.forEach(l => {
       if (!l.active) {
         // Draw broken lamp
@@ -1341,10 +1365,17 @@ export default function App() {
           return d < prev.dist ? { dist: d, exp: curr } : prev;
         }, { dist: 200, exp: null as any });
 
-        if (nearestExp.exp && powerOn) {
+        const shouldApplyGlow = !!(nearestExp.exp && powerOn);
+        if (shouldApplyGlow) {
           ctx.save();
           ctx.shadowBlur = 15;
           ctx.shadowColor = `rgba(255, 150, 50, ${1 - nearestExp.dist / 200})`;
+          // Use a simple glow instead of shadowBlur for performance
+          const cityGlow = ctx.createRadialGradient(c.x, c.y - 20, 0, c.x, c.y - 20, 40);
+          cityGlow.addColorStop(0, `rgba(255, 150, 50, ${0.3 * (1 - nearestExp.dist / 200)})`);
+          cityGlow.addColorStop(1, 'transparent');
+          ctx.fillStyle = cityGlow;
+          ctx.fillRect(c.x - 40, c.y - 80, 80, 80);
         }
 
         if (c.type === 'eastern-market') {
@@ -1472,7 +1503,7 @@ export default function App() {
           }
         }
         
-        if (nearestExp.exp) ctx.restore();
+        if (shouldApplyGlow) ctx.restore();
       } else {
         // Draw Ruins
         drawRuins(ctx, c.x, c.y, c.type || 'apartment');
@@ -1572,14 +1603,20 @@ export default function App() {
     ctx.restore();
 
     frameRef.current = requestAnimationFrame(update);
-  }, [gameState, score, spawnRocket]);
+  }, [gameState, spawnRocket]);
 
   useEffect(() => {
     const handleResize = () => {
       if (containerRef.current && canvasRef.current) {
-        // Use window innerHeight to be absolutely sure about the viewport
-        canvasRef.current.width = window.innerWidth;
-        canvasRef.current.height = window.innerHeight;
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        canvasRef.current.width = w;
+        canvasRef.current.height = h;
+        
+        // If game is starting, we might need to re-init positions
+        if (gameState === 'START') {
+          // Optional: pre-init some stars or something
+        }
       }
     };
 
@@ -1687,7 +1724,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-black/80 backdrop-blur-xl flex items-center justify-center p-6 z-50 text-center pt-48"
+            className="absolute inset-0 bg-black/80 backdrop-blur-xl flex items-center justify-center p-6 z-50 text-center"
           >
             <motion.div
               initial={{ scale: 0.9, y: 20 }}

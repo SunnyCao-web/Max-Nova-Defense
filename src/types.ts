@@ -12,6 +12,8 @@ export interface Entity {
 }
 
 export interface Rocket extends Entity {
+  startX: number;
+  startY: number;
   targetX: number;
   targetY: number;
   speed: number;
